@@ -42,4 +42,8 @@ Existing generated applications keep their copied files. Updating this repositor
 
 Both folders were copied without application changes from `team8solutions/ait-foundry` commit `446c56170c8e20e71f0447691bd51c825947abde`, under `services/workspace/templates/`.
 
-Next.js upstream provenance and its MIT license remain in [`UPSTREAM.md`](nextjs-fullstack/UPSTREAM.md) and [`LICENSE`](nextjs-fullstack/LICENSE). No repository-wide license is granted for the other project-authored files.
+This repository is licensed under [MIT](LICENSE). You can use, change, and distribute the templates, including in commercial applications. Keep the applicable copyright and license notices.
+
+Each template includes its own `LICENSE` so generated applications keep the notices. Next.js upstream provenance and the Vercel MIT notice remain in [`UPSTREAM.md`](nextjs-fullstack/UPSTREAM.md) and [`LICENSE`](nextjs-fullstack/LICENSE).
+
+This license covers this repository, not Foundry's platform code or Python runtime helpers. Those remain under their own terms.
