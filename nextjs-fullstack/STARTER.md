@@ -20,7 +20,7 @@ This guide is everything you need. Do not re-read the starter's files to redisco
 1. **Table:** add it to `lib/server/db/schema.ts` with `userId` (and `teamId` if shared) referencing the existing tables. Run `npm run db:generate` to create the next migration in `drizzle/`. Do not edit `0000_initial.sql`.
 2. **Page:** make `app/(dashboard)/dashboard/page.tsx` the feature's main screen, or add `app/(dashboard)/dashboard/<feature>/page.tsx` and a link in `app/(dashboard)/dashboard/layout.tsx`. Start with `const context = await requirePageUser();` and query only rows where `userId = context.user.id`.
 3. **Writes:** add `app/api/<feature>/route.ts` modelled on `app/api/account/profile/route.ts`: `parseFormRequest`, then `requestUserContext` (redirect to `/sign-in` if empty), then a Zod schema from `lib/validation.ts`, then the write scoped to `context.user.id`, then `formRedirect` back with `success` or `error`. Plain HTML forms that post to the route are enough; no client state library is needed.
-4. **Check:** run `npm run typecheck` and `npm run lint` once at the end.
+4. **Stop:** finish once the code is in place. The preview starts by itself; the checks below are optional follow-ups the person can ask for.
 
 Leave sign-in, sign-up, profile, security, activity, not-found, and their styles unchanged unless the request asks for them. They already work and pass the integration suite.
 
