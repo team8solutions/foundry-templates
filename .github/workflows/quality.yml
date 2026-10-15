@@ -1,0 +1,56 @@
+name: Template quality
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - run: python -I -m py_compile fullstack-auth/main.py
+
+  nextjs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: next_template_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d next_template_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: nextjs-fullstack
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: "24.21.0"
+          cache: npm
+          cache-dependency-path: nextjs-fullstack/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint && npm run typecheck && npm test
+      - name: Build without runtime configuration
+        run: npm run build
+      - name: Verify application against disposable PostgreSQL
+        env:
+          DATABASE_URL: postgresql://postgres@127.0.0.1:5432/next_template_test
+        run: |
+          SESSION_SIGNING_KEY="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')"
+          export SESSION_SIGNING_KEY
+          npm run test:integration
