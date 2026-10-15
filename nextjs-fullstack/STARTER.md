@@ -29,6 +29,8 @@ npm run dev
 
 ## Checks
 
+During an AIT Foundry build, do not run this list. Let the preview start, then mention these as optional checks the person can ask for.
+
 ```sh
 npm run lint
 npm run typecheck
