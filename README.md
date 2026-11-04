@@ -33,7 +33,7 @@ The build needs no database or signing key. For local setup and integration test
 1. Put a template in its own folder. Include `STARTER.md`, dependency files, applicable license notices, and runnable checks.
 2. Add its checks to `.github/workflows/quality.yml`.
 3. Open a pull request here.
-4. Update Foundry's template submodule (`services/workspace/templates`) to the reviewed commit. A new template also needs explicit approval in Foundry's existing installer, API, and selection UI. Adding a folder does not enable it automatically.
+4. Update the `services/workspace/foundry-templates` submodule in Foundry to the reviewed commit. Foundry packages `nextjs-fullstack` from it; its Python starter is kept in Foundry itself. A new template also needs explicit approval in Foundry's existing installer, API, and selection UI. Adding a folder does not enable it automatically.
 5. Run Foundry's template compatibility tests and rebuild both the workspace and control-plane images.
 
 Existing generated applications keep their copied files. Updating this repository does not update those applications.
