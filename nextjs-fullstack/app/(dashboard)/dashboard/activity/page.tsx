@@ -1,7 +1,7 @@
 import { Activity, KeyRound, LogIn, LogOut, Settings, UserPlus, UserMinus } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { activityForUser, requirePageUser } from "@/lib/server/auth";
-import { ActivityType, type ActivityType as ActivityName } from "@/lib/server/db/schema";
+import { ActivityType, type ActivityType as ActivityName } from "@/lib/server/data";
 
 const activityDetails: Record<ActivityName, { label: string; icon: LucideIcon }> = {
   [ActivityType.SIGN_UP]: { label: "Created the account", icon: UserPlus },

@@ -1,44 +1,19 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
-import {
-  databaseUrlFrom,
-  sessionCookieSecureFrom,
-  sessionSigningKeyFrom,
-  validateRuntimeEnvFrom,
-} from "../../lib/env-core";
 
-test("validates runtime database and signing settings", () => {
-  assert.equal(
-    databaseUrlFrom({ DATABASE_URL: "postgresql://app:pass@localhost/app" }),
-    "postgresql://app:pass@localhost/app",
-  );
-  assert.equal(sessionSigningKeyFrom({ SESSION_SIGNING_KEY: "a".repeat(32) }).byteLength, 32);
-  assert.throws(() => databaseUrlFrom({}), /DATABASE_URL is required/);
-  assert.throws(() => databaseUrlFrom({ DATABASE_URL: "https://example.test" }), /PostgreSQL protocol/);
-  assert.throws(() => sessionSigningKeyFrom({ SESSION_SIGNING_KEY: "too-short" }), /at least 32 bytes/);
-  assert.doesNotThrow(() =>
-    validateRuntimeEnvFrom({
-      DATABASE_URL: "postgresql://app:pass@localhost/app",
-      SESSION_SIGNING_KEY: "a".repeat(32),
-    }),
-  );
-  assert.throws(
-    () =>
-      validateRuntimeEnvFrom({
-        DATABASE_URL: "postgresql://app:pass@localhost/app",
-      }),
-    /SESSION_SIGNING_KEY is required/,
-  );
+const read = (file: string) => JSON.parse(readFileSync(new URL(`../../${file}`, import.meta.url), "utf8"));
+
+test("declares only the platform-generated signing key", () => {
+  const { variables } = read(".symposia/env.json");
+  assert.deepEqual(variables.map((v: { key: string }) => v.key), ["SESSION_SIGNING_KEY"]);
 });
 
-test("uses secure cookies unless local HTTP opts out", () => {
-  assert.equal(sessionCookieSecureFrom({}), true);
-  assert.equal(sessionCookieSecureFrom({ SESSION_COOKIE_SECURE: "true" }), true);
-  assert.equal(sessionCookieSecureFrom({ SESSION_COOKIE_SECURE: "false" }), false);
-});
-
-test("lets only an AIT Foundry preview use plain-HTTP cookies by default", () => {
-  assert.equal(sessionCookieSecureFrom({ SYMPOSIA_ENV: "dev" }), false);
-  assert.equal(sessionCookieSecureFrom({ SYMPOSIA_ENV: "prod" }), true);
-  assert.equal(sessionCookieSecureFrom({ SYMPOSIA_ENV: "dev", SESSION_COOKIE_SECURE: "true" }), true);
+test("keeps data in the platform helpers, not its own database", () => {
+  const pkg = read("package.json");
+  assert.equal(pkg.imports["#sandbox/*"], "./.symposia/sandbox/*.mjs");
+  const declared = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
+  for (const name of ["pg", "postgres", "drizzle-orm", "@google-cloud/firestore", "@azure/storage-blob"])
+    assert.ok(!declared.includes(name), `${name} must not be a dependency`);
+  assert.doesNotMatch(pkg.scripts.start, /migrat/);
 });

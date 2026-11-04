@@ -3,7 +3,7 @@ import type { Metadata, Viewport } from "next";
 
 export const metadata: Metadata = {
   title: "AIT Foundry Next.js Starter",
-  description: "A secure full-stack Next.js and PostgreSQL starter.",
+  description: "A secure full-stack Next.js starter.",
 };
 
 export const viewport: Viewport = {

@@ -10,7 +10,7 @@ const features = [
   {
     icon: Database,
     title: "Real persistence",
-    text: "PostgreSQL, Drizzle schema, and committed migrations replace mock data from the start.",
+    text: "Accounts, teams and activity are saved in the platform's app database from the start.",
   },
   {
     icon: Activity,
@@ -45,7 +45,7 @@ export default function HomePage() {
           </h1>
           <p className="mt-6 max-w-xl text-lg leading-8 text-gray-600">
             Build the requested workflow on top of a responsive application with authentication,
-            PostgreSQL persistence, and secure server boundaries already in place.
+            saved data, and secure server boundaries already in place.
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link

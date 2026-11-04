@@ -1,14 +1,13 @@
 # Next.js full-stack starter
 
-Use this starter for a browser application that needs a TypeScript frontend, server routes, app-owned accounts, and PostgreSQL persistence.
+Use this starter for a browser application that needs a TypeScript frontend, server routes, app-owned accounts, and saved data.
 
 ## What is included
 
 - Next.js App Router and React.
 - Email/password signup, signin, signout, and signed HTTP-only sessions.
 - A protected dashboard with team membership, profile, password, and activity views.
-- PostgreSQL with Drizzle schema and committed additive migrations.
-- A startup migration runner guarded by a bounded PostgreSQL advisory lock.
+- Saved data through AIT Foundry's app database helper `#sandbox/db`, and sessions through `#sandbox/auth`. No database server, connection variable, schema or migration of its own.
 - Unit tests and a public HTTP integration suite.
 
 The starter does not include billing, password recovery, email delivery, external connectors, cloud provisioning, or a platform identity SDK. Add only what the project needs. Application passwords and sessions identify users of this app only. Never reuse them as credentials for a connector or external service.
@@ -17,33 +16,35 @@ The starter does not include billing, password recovery, email delivery, externa
 
 This guide is everything you need. Do not re-read the starter's files to rediscover it. For a basic feature such as a tracker or list, change only these places:
 
-1. **Table:** add it to `lib/server/db/schema.ts` with `userId` (and `teamId` if shared) referencing the existing tables. Run `npm run db:generate` to create the next migration in `drizzle/`. Do not edit `0000_initial.sql`.
-2. **Page:** make `app/(dashboard)/dashboard/page.tsx` the feature's main screen, or add `app/(dashboard)/dashboard/<feature>/page.tsx` and a link in `app/(dashboard)/dashboard/layout.tsx`. Start with `const context = await requirePageUser();` and query only rows where `userId = context.user.id`.
-3. **Writes:** add `app/api/<feature>/route.ts` modelled on `app/api/account/profile/route.ts`: `parseFormRequest`, then `requestUserContext` (redirect to `/sign-in` if empty), then a Zod schema from `lib/validation.ts`, then the write scoped to `context.user.id`, then `formRedirect` back with `success` or `error`. Plain HTML forms that post to the route are enough; no client state library is needed.
+1. **Data:** keep each user's records in a subcollection of their user document: add a helper next to the others in `lib/server/data.ts`, such as `export const notes = (userId: string) => user(userId).collection("notes");`. Records shared by a team go under `team(teamId).collection(...)`. There is no schema or migration: a document is a plain object of fields.
+2. **Page:** make `app/(dashboard)/dashboard/page.tsx` the feature's main screen, or add `app/(dashboard)/dashboard/<feature>/page.tsx` and a link in `app/(dashboard)/dashboard/layout.tsx`. Start with `const context = await requirePageUser();` and read only `notes(context.user.id)`, for example `(await notes(context.user.id).orderBy("created_at", "desc").limit(50).get()).docs`. Dates come back as Timestamps: call `.toDate()`.
+3. **Writes:** add `app/api/<feature>/route.ts` modelled on `app/api/account/profile/route.ts`: `parseFormRequest`, then `requestUserContext` (redirect to `/sign-in` if empty), then a Zod schema from `lib/validation.ts`, then the write under `context.user.id` (`notes(context.user.id).add({ ..., created_at: FieldValue.serverTimestamp() })`; to change or delete a record, use `notes(context.user.id).doc(id)` so another user's id is never reachable), then `formRedirect` back with `success` or `error`. Plain HTML forms that post to the route are enough; no client state library is needed.
 4. **Stop:** finish once the code is in place. The preview starts by itself; the checks below are optional follow-ups the person can ask for.
 
 Leave sign-in, sign-up, profile, security, activity, not-found, and their styles unchanged unless the request asks for them. They already work and pass the integration suite.
 
 ## In AIT Foundry
 
-- The preview and the published app install packages, run `npm run build`, then `npm start` on `0.0.0.0:$PORT`. They have no Docker, Compose or local PostgreSQL: do not run the local setup below inside a Foundry build.
-- Keep all saved data in this PostgreSQL schema through `db()`. Never add cloud SDKs, a second database, or another connection variable, and never keep records in local files: the published app's disk is not kept.
-- This starter has no file upload storage. Foundry's file helper is Python-only, so do not add uploads; say so if the request needs them.
+- The preview and the published app install packages, run `npm run build`, then `npm start` on `0.0.0.0:$PORT`. They have no Docker, Compose or database server for the app to configure: do not run the local setup below inside a Foundry build.
+- Keep all saved data in `#sandbox/db` and sessions in `#sandbox/auth`, in server code only (route handlers, server components, server actions). Use only what `#sandbox/db` offers (listed in `.symposia/sandbox/db.d.mts`): the same code then runs wherever the platform publishes the app (Google Cloud or Azure). Preview and published data are separate. Never add a database package, cloud SDK, connection variable or second database, and never keep records in local files: the published app's disk is not kept.
+- Prefer subcollections and single-field `orderBy` over several `where` filters on one collection: those need a composite index on Google Cloud.
+- Pages that read data render per request: the helpers have no database while the app builds. Pages under `dashboard/` already do (`dynamic = "force-dynamic"` in its layout).
+- Uploads: use `#sandbox/files` (`put`, `read`, `url`, `delete`) the same way, with names under the user's id, such as `${context.user.id}/${id}.png`.
+- `.symposia/sandbox/` is a copy of the platform's helpers, so the app type-checks and builds here. The platform replaces it with its current version on every preview and publish: do not edit it. Its packages (such as `pg`) are installed by the platform; do not add them to `package.json`.
 - Declare any new variable in `.symposia/env.json`. `SESSION_SIGNING_KEY` is generated by the platform. A preview (`SYMPOSIA_ENV=dev`) uses non-Secure session cookies so it also works over plain HTTP; the published app keeps them Secure.
 
 ## Local setup
 
-Outside AIT Foundry. Requirements: Node 24+, npm, and Docker with Compose.
+Outside AIT Foundry. Requirements: Node 24+, npm, and any PostgreSQL 14+ (the helpers' local store), for example `docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=local-development-only postgres:17-alpine`.
 
 ```sh
-docker compose up -d postgres
 npm ci
+npm install --no-save pg@8.23.1
 npm run db:setup
-npm run db:migrate
 npm run dev
 ```
 
-`npm run db:setup` creates a private `.env.local` with disposable local values. It refuses to overwrite an existing file. No real credential is committed.
+`npm run db:setup` creates a private `.env.local` with disposable local values for the settings the platform normally provides (`SYMPOSIA_DATA_BACKEND=postgres`, `SYMPOSIA_DATABASE_URL`, `SESSION_SIGNING_KEY`). It refuses to overwrite an existing file. No real credential is committed. The helpers create their one table on first use.
 
 ## Checks
 
@@ -57,21 +58,19 @@ npm run build
 npm run test:integration
 ```
 
-`build` does not need database or signing-key access. Runtime auth and database paths fail closed when required configuration is missing.
+`build` does not need database or signing-key access. Runtime auth and data paths fail closed when the database is unavailable.
 
-`test:integration` requires `DATABASE_URL` and `SESSION_SIGNING_KEY`. By default it starts and stops the built production application. Set `TEST_BASE_URL` to reuse the same suite against an already-running preview or production application. Set `TEST_PREVIEW_GRANT` only when that target is behind the trusted AIT Foundry preview proxy.
+`test:integration` requires `pg` (installed as above) and the `.env.local` settings, pointing at the same database as the app under test. By default it starts and stops the built production application. Set `TEST_BASE_URL` to reuse the same suite against an already-running preview or production application. Set `TEST_PREVIEW_GRANT` only when that target is behind the trusted AIT Foundry preview proxy.
 
 ## Extending the starter
 
-- Put secret-dependent code under `lib/server/` and keep it out of Client Components.
+- Put secret-dependent and data code under `lib/server/` and keep it out of Client Components.
 - Validate every request at runtime. TypeScript types do not validate network data.
 - Call the server authorization helpers in every protected route or mutation. UI visibility is not authorization.
-- Scope database writes to the signed-in user and their team. Never trust a browser-supplied user or team ID.
-- Add a new numbered SQL migration for every schema change. Do not edit a migration already used by another environment.
+- Scope every read and write to the signed-in user's or their team's documents. Never trust a browser-supplied user or team ID.
+- Use `runTransaction` or `batch` when several documents must change together, as sign-up, profile and password changes do. Catch `AlreadyExists` and `NotFound` from `#sandbox/db`.
 - Keep `GET /api/healthz` as process liveness only. It does not prove database readiness.
 - Configure rate limits for signup and signin at the trusted edge before public launch.
 - Keep preview embedding support. Do not add `X-Frame-Options: DENY` without coordinating with the platform.
 
-The default `npm start` command applies migrations before `next start`, so its database identity needs schema-write rights. If production uses a less-privileged runtime identity, run `npm run db:migrate` as a separately controlled deployment job and change the runtime command to `npm run start:app`. A separate migration job alone does not remove the default startup command's migration requirement.
-
-In AIT Foundry, `DATABASE_URL` is provided automatically when the platform has an app database server configured. Preview gets its own development database and the published app gets a separate production database; data is never copied between them. Both use the database's owner login, so the default `npm start` migrations work. Setting your own `DATABASE_URL` in Project settings replaces the provided one. Outside Foundry, or without that server, set `DATABASE_URL` yourself; if preview and production share one, they share users and application data.
+A password change raises the account's session version, which ends its other sessions. Sessions last 24 hours.

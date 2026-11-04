@@ -1,33 +1,33 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import postgres from "postgres";
 import { Cookie, CookieJar } from "tough-cookie";
+import { sign } from "#sandbox/auth";
+import { collection, document, FieldValue } from "#sandbox/db";
 import { hashPassword } from "../lib/auth/password";
-import { createSessionToken } from "../lib/auth/session-core";
-import {
-  databaseUrlFrom,
-  sessionSigningKeyFrom,
-} from "../lib/env-core";
-import { MIGRATION_LOCK_ID, runMigrations } from "../scripts/migrate";
 
+// The app keeps its data through #sandbox/db; this suite reads and writes the same database with it.
+// It needs SYMPOSIA_DATA_BACKEND=postgres, SYMPOSIA_DATABASE_URL and SESSION_SIGNING_KEY (see
+// STARTER.md), the same values the application under test uses.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const databaseUrl = databaseUrlFrom(process.env);
-const signingKey = sessionSigningKeyFrom(process.env);
+const databaseUrl = process.env.SYMPOSIA_DATABASE_URL || "";
+const signingKey = process.env.SESSION_SIGNING_KEY || "";
 const previewGrant = process.env.TEST_PREVIEW_GRANT;
 const suppliedBaseUrl = process.env.TEST_BASE_URL?.replace(/\/$/, "");
 const runId = `it-${Date.now()}-${process.pid}`;
 const emailPrefix = `${runId}-`;
 const password = "initial-password";
 const nextPassword = "updated-password";
+const SESSION_COOKIE = "symposia_session";
 
 function redact(value: string) {
-  let result = value.replaceAll(databaseUrl, "[DATABASE_URL]");
-  const key = process.env.SESSION_SIGNING_KEY;
-  if (key) result = result.replaceAll(key, "[SESSION_SIGNING_KEY]");
+  let result = databaseUrl ? value.replaceAll(databaseUrl, "[SYMPOSIA_DATABASE_URL]") : value;
+  if (signingKey) result = result.replaceAll(signingKey, "[SESSION_SIGNING_KEY]");
   return result;
 }
 
@@ -58,9 +58,7 @@ async function waitForHealth(app: RunningApp, timeoutMs = 60_000) {
     if (app.child.exitCode !== null)
       throw new Error(`Application exited before readiness.\n${redact(app.output())}`);
     try {
-      const response = await fetch(`${app.baseUrl}/api/healthz`, {
-        headers: previewGrant ? { "x-symposia-preview-grant": previewGrant } : {},
-      });
+      const response = await fetch(`${app.baseUrl}/api/healthz`);
       if (response.ok) return;
     } catch {}
     await delay(200);
@@ -68,34 +66,15 @@ async function waitForHealth(app: RunningApp, timeoutMs = 60_000) {
   throw new Error(`Application did not become ready.\n${redact(app.output())}`);
 }
 
-async function startApp(options: {
-  migrate: boolean;
-  secureCookie?: boolean;
-  url?: string;
-  port?: number;
-}) {
+// Runs the built app as the platform does (`next start`), with these settings changed.
+async function startApp(options: { env?: Record<string, string>; port?: number } = {}) {
   const port = options.port || await freePort();
-  const env = {
-    ...process.env,
-    DATABASE_URL: options.url || databaseUrl,
-    SESSION_SIGNING_KEY: process.env.SESSION_SIGNING_KEY,
-    PORT: String(port),
-    NODE_ENV: "production",
-  };
-  if (options.secureCookie === undefined) delete env.SESSION_COOKIE_SECURE;
-  else env.SESSION_COOKIE_SECURE = String(options.secureCookie);
   const child = spawn(
     process.execPath,
-    [
-      "--env-file-if-exists=.env.local",
-      "--import",
-      "tsx",
-      "scripts/start.ts",
-      ...(options.migrate ? [] : ["--skip-migrations"]),
-    ],
+    [path.resolve(root, "node_modules/next/dist/bin/next"), "start", "-H", "127.0.0.1", "-p", String(port)],
     {
       cwd: root,
-      env,
+      env: { ...process.env, NODE_ENV: "production", ...options.env },
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
@@ -123,24 +102,6 @@ async function stopApp(app: RunningApp | undefined) {
   if (await Promise.race([stopped, delay(10_000).then(() => false)])) return;
   app.child.kill("SIGKILL");
   await stopped;
-}
-
-async function runNpm(args: string[], env: NodeJS.ProcessEnv = process.env) {
-  return new Promise<{ code: number | null; output: string }>((resolve, reject) => {
-    const child = spawn("npm", args, {
-      cwd: root,
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let output = "";
-    const append = (chunk: Buffer) => {
-      output = (output + chunk.toString()).slice(-20_000);
-    };
-    child.stdout.on("data", append);
-    child.stderr.on("data", append);
-    child.once("error", reject);
-    child.once("exit", (code) => resolve({ code, output: redact(output) }));
-  });
 }
 
 function setCookieHeaders(response: Response) {
@@ -177,14 +138,14 @@ class Browser {
 
   async setSession(token: string) {
     await this.jar.setCookie(
-      `session=${token}; Path=/; HttpOnly; SameSite=Lax`,
+      `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax`,
       this.baseUrl,
     );
   }
 
   async sessionToken() {
     return (await this.jar.getCookies(this.baseUrl)).find(
-      (cookie) => cookie.key === "session",
+      (cookie) => cookie.key === SESSION_COOKIE,
     )?.value;
   }
 }
@@ -203,42 +164,9 @@ async function assertProtected(browser: Browser, pathname = "/dashboard") {
   assert.match(response.headers.get("location") || "", /\/sign-in/);
 }
 
-async function verifyMigrationLifecycle(sql: postgres.Sql) {
-  const concurrent = await Promise.all([
-    runNpm(["run", "db:migrate"]),
-    runNpm(["run", "db:migrate"]),
-  ]);
-  assert.deepEqual(concurrent.map((result) => result.code), [0, 0]);
-  const repeated = await runNpm(["run", "db:migrate"]);
-  assert.equal(repeated.code, 0, repeated.output);
-
-  const connection = await sql.reserve();
-  try {
-    await connection`select pg_advisory_lock(${MIGRATION_LOCK_ID})`;
-    await assert.rejects(runMigrations(300), /Timed out waiting for the migration lock/);
-  } finally {
-    await connection`select pg_advisory_unlock(${MIGRATION_LOCK_ID})`;
-    connection.release();
-  }
-  await runMigrations();
-  process.stdout.write("ok - repeated, concurrent and bounded migrations\n");
-}
-
-async function verifyMissingConfiguration() {
-  const env = {
-    ...process.env,
-    DATABASE_URL: databaseUrl,
-    SESSION_SIGNING_KEY: "",
-  };
-  const result = await runNpm(["run", "start:app"], env);
-  assert.equal(result.code, 1);
-  assert.match(result.output, /runtime configuration or migration failed/);
-  assert.doesNotMatch(result.output, /server-only/);
-  process.stdout.write("ok - startup rejects missing signing configuration\n");
-}
-
 async function verifySecureCookieDefault() {
-  const app = await startApp({ migrate: false });
+  // The published app (SYMPOSIA_ENV=prod) keeps its own data and only sends Secure cookies.
+  const app = await startApp({ env: { SYMPOSIA_ENV: "prod" } });
   try {
     const browser = new Browser(app.baseUrl);
     const response = await browser.form("/api/auth/sign-up", {
@@ -252,10 +180,11 @@ async function verifySecureCookieDefault() {
     assert.equal(parsed.httpOnly, true);
     assert.equal(parsed.sameSite, "lax");
     assert.equal(await browser.jar.getCookieString(app.baseUrl), "");
+    assert.equal(await accountFor(`${emailPrefix}secure@example.test`), null, "prod data must not appear in dev");
   } finally {
     await stopApp(app);
   }
-  process.stdout.write("ok - secure cookies are the default and blocked on HTTP\n");
+  process.stdout.write("ok - the published app sends Secure cookies only, and keeps its own data\n");
 }
 
 async function verifyInputBoundary(browser: Browser) {
@@ -301,6 +230,9 @@ async function verifyAccountFlow(
   const cookie = await signUp(browser, email);
   if (browser.baseUrl.startsWith("http://")) assert.equal(cookie.secure, false);
 
+  const duplicate = await new Browser(browser.baseUrl).form("/api/auth/sign-up", { email, password });
+  assertFormRedirect(duplicate, "/sign-up?error=");
+
   let page = await browser.request("/dashboard");
   assert.equal(page.status, 200);
   assert.match(await page.text(), new RegExp(email));
@@ -317,97 +249,88 @@ async function verifyAccountFlow(
   page = await browser.request("/dashboard");
   assert.equal(page.status, 200);
   assert.match(await page.text(), /Ada Integration/);
-  process.stdout.write("ok - signup, profile and restart persistence\n");
+  process.stdout.write("ok - signup, duplicate email, profile and restart persistence\n");
 }
 
-async function contextForEmail(sql: postgres.Sql, email: string) {
-  const [row] = await sql<{
-    user_id: number;
-    session_version: number;
-    membership_id: number;
-    team_id: number;
-  }[]>`
-    select u.id as user_id, u.session_version, tm.id as membership_id, tm.team_id
-    from users u join team_members tm on tm.user_id = u.id
-    where u.email = ${email}
-  `;
-  assert.ok(row);
-  return row;
+const emailKey = (email: string) => createHash("sha256").update(email).digest("hex");
+
+async function accountFor(email: string) {
+  const userId = (await document("user_emails", emailKey(email)).get()).get("user_id");
+  if (typeof userId !== "string") return null;
+  const account = await document("users", userId).get();
+  return {
+    userId,
+    sessionVersion: Number(account.get("session_version")),
+    teamId: String(account.get("team_id")),
+  };
 }
 
-async function verifyLongEmailSignUp(sql: postgres.Sql, baseUrl: string) {
+async function contextForEmail(email: string) {
+  const context = await accountFor(email);
+  assert.ok(context, `no account for ${email}`);
+  return context;
+}
+
+const membership = (teamId: string, userId: string) =>
+  document("teams", teamId).collection("members").doc(userId);
+
+async function verifyLongEmailSignUp(baseUrl: string) {
   const email = `${emailPrefix.padEnd(64, "x")}@long-integration.example.test`;
   assert.equal(email.length, 94);
   const browser = new Browser(baseUrl);
   await signUp(browser, email);
-  const context = await contextForEmail(sql, email);
-  const [team] = await sql<{ name: string }[]>`
-    select name from teams where id = ${context.team_id}
-  `;
-  assert.equal(team.name, `${email.slice(0, 93)}'s team`);
-  assert.equal(team.name.length, 100);
+  const context = await contextForEmail(email);
+  const team = await document("teams", context.teamId).get();
+  assert.equal(team.get("name"), `${email.slice(0, 93)}'s team`);
+  assert.equal(team.get("name").length, 100);
   assert.equal((await browser.request("/dashboard")).status, 200);
   process.stdout.write("ok - long valid email creates an account with a bounded team name\n");
 }
 
-async function verifyAuthorization(
-  sql: postgres.Sql,
-  owner: Browser,
-  ownerEmail: string,
-  secondEmail: string,
-) {
+async function verifyAuthorization(owner: Browser, ownerEmail: string, secondEmail: string) {
   const second = new Browser(owner.baseUrl);
   await signUp(second, secondEmail);
-  const ownerContext = await contextForEmail(sql, ownerEmail);
-  const secondContext = await contextForEmail(sql, secondEmail);
+  const ownerContext = await contextForEmail(ownerEmail);
+  const secondContext = await contextForEmail(secondEmail);
 
-  let response = await owner.form(
-    `/api/team/members/${secondContext.membership_id}`,
-    {},
-  );
+  // Another team's member is out of reach, and neither user sees the other's team.
+  let response = await owner.form(`/api/team/members/${secondContext.userId}`, {});
   assertFormRedirect(response, "/dashboard?error=");
-  assert.ok(await contextForEmail(sql, secondEmail));
+  assert.ok((await membership(secondContext.teamId, secondContext.userId).get()).exists);
+  assert.doesNotMatch(await (await owner.request("/dashboard")).text(), new RegExp(secondEmail));
+  assert.doesNotMatch(await (await second.request("/dashboard")).text(), new RegExp(ownerEmail));
+  const secondUser = await (await second.request("/api/user")).json();
+  assert.equal(secondUser.email, secondEmail);
 
   const memberEmail = `${emailPrefix}member@example.test`;
-  const memberHash = await hashPassword(password);
-  const [member] = await sql<{ id: number; session_version: number }[]>`
-    insert into users (email, password_hash)
-    values (${memberEmail}, ${memberHash})
-    returning id, session_version
-  `;
-  const [membership] = await sql<{ id: number }[]>`
-    insert into team_members (user_id, team_id, role)
-    values (${member.id}, ${ownerContext.team_id}, 'member')
-    returning id
-  `;
+  const member = collection("users").doc();
+  const now = FieldValue.serverTimestamp();
+  await member.create({
+    email: memberEmail,
+    name: null,
+    password_hash: await hashPassword(password),
+    session_version: 1,
+    team_id: ownerContext.teamId,
+    created_at: now,
+    updated_at: now,
+  });
+  await document("user_emails", emailKey(memberEmail)).create({ user_id: member.id });
+  await membership(ownerContext.teamId, member.id).create({ role: "member", joined_at: now });
   const memberBrowser = new Browser(owner.baseUrl);
-  await memberBrowser.setSession(
-    await createSessionToken(
-      { userId: member.id, sessionVersion: member.session_version },
-      signingKey,
-    ),
-  );
-  response = await memberBrowser.form(
-    `/api/team/members/${ownerContext.membership_id}`,
-    {},
-  );
+  await memberBrowser.setSession(await sign(`${member.id}:1`));
+  assert.match(await (await memberBrowser.request("/dashboard")).text(), new RegExp(ownerEmail));
+  response = await memberBrowser.form(`/api/team/members/${ownerContext.userId}`, {});
   assertFormRedirect(response, "/dashboard?error=");
 
-  response = await owner.form(`/api/team/members/${membership.id}`, {});
+  response = await owner.form(`/api/team/members/${member.id}`, {});
   assertFormRedirect(response, "/dashboard?success=");
-  const [remaining] = await sql<{ count: number }[]>`
-    select count(*)::int as count from team_members where id = ${membership.id}
-  `;
-  assert.equal(remaining.count, 0);
+  assert.equal((await membership(ownerContext.teamId, member.id).get()).exists, false);
+  await assertProtected(memberBrowser);
   process.stdout.write("ok - user, team and owner authorization\n");
 }
 
-async function verifySessionsAndPassword(
-  sql: postgres.Sql,
-  browser: Browser,
-  email: string,
-) {
-  const context = await contextForEmail(sql, email);
+async function verifySessionsAndPassword(browser: Browser, email: string) {
+  const context = await contextForEmail(email);
   const previousToken = await browser.sessionToken();
   assert.ok(previousToken);
 
@@ -432,14 +355,13 @@ async function verifySessionsAndPassword(
   await tampered.setSession(parts.join("."));
   await assertProtected(tampered);
 
+  // Signed with the right key and version, but issued more than a day ago.
+  const now = Date.now;
+  Date.now = () => now() - 25 * 60 * 60 * 1000;
+  const old = await sign(`${context.userId}:${context.sessionVersion + 1}`);
+  Date.now = now;
   const expired = new Browser(browser.baseUrl);
-  await expired.setSession(
-    await createSessionToken(
-      { userId: context.user_id, sessionVersion: context.session_version + 1 },
-      signingKey,
-      new Date(Date.now() - 1_000),
-    ),
-  );
+  await expired.setSession(old);
   await assertProtected(expired);
 
   const oldPassword = new Browser(browser.baseUrl);
@@ -472,14 +394,11 @@ async function verifyActivityAndSignOut(browser: Browser) {
   process.stdout.write("ok - activity persists and signout clears the browser session\n");
 }
 
-async function verifyDatabaseOutage(userId: number, sessionVersion: number) {
-  const unavailable = "postgresql://app:test@127.0.0.1:1/unavailable";
-  const app = await startApp({ migrate: false, secureCookie: false, url: unavailable });
+async function verifyDatabaseOutage(userId: string, sessionVersion: number) {
+  const app = await startApp({ env: { SYMPOSIA_DATABASE_URL: "postgresql://app:test@127.0.0.1:1/unavailable" } });
   try {
     const browser = new Browser(app.baseUrl);
-    await browser.setSession(
-      await createSessionToken({ userId, sessionVersion }, signingKey),
-    );
+    await browser.setSession(await sign(`${userId}:${sessionVersion}`));
     const protectedPage = await browser.request("/dashboard");
     assert.ok(protectedPage.status >= 500);
     const response = await browser.form("/api/auth/sign-out", {});
@@ -492,67 +411,76 @@ async function verifyDatabaseOutage(userId: number, sessionVersion: number) {
   process.stdout.write("ok - liveness stays separate and signout survives a database outage\n");
 }
 
-async function cleanup(sql: postgres.Sql) {
-  await sql`
-    delete from teams where id in (
-      select distinct tm.team_id from team_members tm
-      join users u on u.id = tm.user_id
-      where u.email like ${`${emailPrefix}%`}
-    )
-  `;
-  await sql`delete from users where email like ${`${emailPrefix}%`}`;
+// Removes every account this run created, in both the preview ("dev") and published ("prod") data.
+async function cleanup() {
+  const environment = process.env.SYMPOSIA_ENV;
+  try {
+    for (const env of ["dev", "prod"]) {
+      process.env.SYMPOSIA_ENV = env;
+      const { docs } = await collection("users")
+        .where("email", ">=", emailPrefix)
+        .where("email", "<", `${emailPrefix}`)
+        .get();
+      for (const account of docs) {
+        const teamId = String(account.get("team_id"));
+        for (const ref of await account.ref.collection("activity").listDocuments()) await ref.delete();
+        for (const ref of await document("teams", teamId).collection("members").listDocuments()) await ref.delete();
+        await document("teams", teamId).delete();
+        await document("user_emails", emailKey(String(account.get("email")))).delete();
+        await account.ref.delete();
+      }
+    }
+  } finally {
+    if (environment === undefined) delete process.env.SYMPOSIA_ENV;
+    else process.env.SYMPOSIA_ENV = environment;
+  }
 }
 
 async function main() {
   assert.ok(path.isAbsolute(root));
+  assert.equal(process.env.SYMPOSIA_DATA_BACKEND, "postgres", "Set SYMPOSIA_DATA_BACKEND=postgres");
+  assert.ok(databaseUrl, "Set SYMPOSIA_DATABASE_URL");
+  assert.ok(signingKey.length >= 32, "Set SESSION_SIGNING_KEY (at least 32 characters)");
   assert.ok(
-    suppliedBaseUrl || await import("node:fs").then((fs) => fs.existsSync(path.join(root, ".next", "BUILD_ID"))),
+    suppliedBaseUrl || existsSync(path.join(root, ".next", "BUILD_ID")),
     "Run npm run build before the integration suite",
   );
-  const sql = postgres(databaseUrl, { max: 2, connect_timeout: 10 });
   let app: RunningApp | undefined;
   try {
-    await verifyMissingConfiguration();
-    await verifyMigrationLifecycle(sql);
     if (!suppliedBaseUrl) await verifySecureCookieDefault();
 
-    const mainUrl = suppliedBaseUrl || (app = await startApp({
-      migrate: true,
-      secureCookie: false,
-    })).baseUrl;
+    const mainUrl = suppliedBaseUrl || (app = await startApp()).baseUrl;
     const browser = new Browser(mainUrl);
     const ownerEmail = `${emailPrefix}owner@example.test`;
     const secondEmail = `${emailPrefix}second@example.test`;
     const restart = async () => {
       if (suppliedBaseUrl) return;
       await stopApp(app);
-      app = await startApp({
-        migrate: true,
-        secureCookie: false,
-        port: Number(new URL(mainUrl).port),
-      });
+      app = await startApp({ port: Number(new URL(mainUrl).port) });
     };
 
     await verifyAccountFlow(browser, ownerEmail, { restart });
-    await verifyLongEmailSignUp(sql, mainUrl);
-    await verifyAuthorization(sql, browser, ownerEmail, secondEmail);
-    await verifySessionsAndPassword(sql, browser, ownerEmail);
+    await verifyLongEmailSignUp(mainUrl);
+    await verifyAuthorization(browser, ownerEmail, secondEmail);
+    await verifySessionsAndPassword(browser, ownerEmail);
     await verifyActivityAndSignOut(browser);
-    const context = await contextForEmail(sql, ownerEmail);
+    const context = await contextForEmail(ownerEmail);
 
     if (!suppliedBaseUrl) {
       await stopApp(app);
       app = undefined;
-      await verifyDatabaseOutage(context.user_id, context.session_version);
+      await verifyDatabaseOutage(context.userId, context.sessionVersion);
     }
   } finally {
     await stopApp(app);
-    await cleanup(sql).catch(() => undefined);
-    await sql.end({ timeout: 5 });
+    await cleanup().catch((error) => console.error("cleanup failed:", redact(String(error))));
   }
 }
 
-main().catch((error) => {
-  console.error(redact(error instanceof Error ? error.stack || error.message : String(error)));
-  process.exitCode = 1;
-});
+main().then(
+  () => process.exit(process.exitCode ?? 0),
+  (error) => {
+    console.error(redact(error instanceof Error ? error.stack || error.message : String(error)));
+    process.exit(1);
+  },
+);

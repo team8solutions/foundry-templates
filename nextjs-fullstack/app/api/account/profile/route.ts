@@ -1,8 +1,7 @@
-import { eq } from "drizzle-orm";
 import { NextRequest } from "next/server";
-import { requestUserContext } from "@/lib/server/auth";
-import { db } from "@/lib/server/db/client";
-import { ActivityType, activityLogs, users } from "@/lib/server/db/schema";
+import { FieldValue, runTransaction } from "#sandbox/db";
+import { activityEntry, requestUserContext } from "@/lib/server/auth";
+import { ActivityType, activity, user, userEmail } from "@/lib/server/data";
 import { formRedirect, parseFormRequest } from "@/lib/server/responses";
 import { profileSchema } from "@/lib/validation";
 
@@ -18,21 +17,20 @@ export async function POST(request: NextRequest) {
       error: parsed.error.issues[0]?.message || "Invalid profile details",
     });
 
+  const { name, email } = parsed.data;
+  const userId = context.user.id;
   try {
-    await db().transaction(async (tx) => {
-      await tx
-        .update(users)
-        .set({
-          name: parsed.data.name,
-          email: parsed.data.email,
-          updatedAt: new Date(),
-        })
-        .where(eq(users.id, context.user.id));
-      await tx.insert(activityLogs).values({
-        teamId: context.membership.teamId,
-        userId: context.user.id,
-        action: ActivityType.UPDATE_ACCOUNT,
-      });
+    await runTransaction(async (tx) => {
+      const account = await tx.get(user(userId));
+      const previous = String(account.get("email"));
+      if (email !== previous) {
+        // Move the email's claim, unless another account holds the new one.
+        if ((await tx.get(userEmail(email))).exists) throw new Error("Email is taken");
+        tx.delete(userEmail(previous));
+        tx.create(userEmail(email), { user_id: userId });
+      }
+      tx.update(user(userId), { name, email, updated_at: FieldValue.serverTimestamp() });
+      tx.create(activity(userId).doc(), activityEntry(context.membership.teamId, ActivityType.UPDATE_ACCOUNT));
     });
   } catch {
     return formRedirect("/dashboard/general", {

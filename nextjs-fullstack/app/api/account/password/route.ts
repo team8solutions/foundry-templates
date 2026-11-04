@@ -1,13 +1,8 @@
-import { and, eq } from "drizzle-orm";
 import { NextRequest } from "next/server";
+import { FieldValue, runTransaction } from "#sandbox/db";
 import { comparePassword, hashPassword } from "@/lib/auth/password";
-import { requestUserContext } from "@/lib/server/auth";
-import { db } from "@/lib/server/db/client";
-import {
-  ActivityType,
-  activityLogs,
-  users,
-} from "@/lib/server/db/schema";
+import { activityEntry, requestUserContext } from "@/lib/server/auth";
+import { ActivityType, activity, user } from "@/lib/server/data";
 import { formRedirect, parseFormRequest } from "@/lib/server/responses";
 import { setSessionCookie } from "@/lib/server/session";
 import { passwordChangeSchema } from "@/lib/validation";
@@ -24,14 +19,11 @@ export async function POST(request: NextRequest) {
       error: parsed.error.issues[0]?.message || "Invalid password details",
     });
 
-  const [stored] = await db()
-    .select({ passwordHash: users.passwordHash })
-    .from(users)
-    .where(eq(users.id, context.user.id))
-    .limit(1);
+  const account = user(context.user.id);
+  const stored = (await account.get()).get("password_hash");
   if (
-    !stored ||
-    !(await comparePassword(parsed.data.currentPassword, stored.passwordHash))
+    typeof stored !== "string" ||
+    !(await comparePassword(parsed.data.currentPassword, stored))
   )
     return formRedirect("/dashboard/security", {
       error: "Current password is incorrect",
@@ -39,28 +31,17 @@ export async function POST(request: NextRequest) {
 
   const passwordHash = await hashPassword(parsed.data.newPassword);
   const nextSessionVersion = context.user.sessionVersion + 1;
-  const [updated] = await db().transaction(async (tx) => {
-    const changed = await tx
-      .update(users)
-      .set({
-        passwordHash,
-        sessionVersion: nextSessionVersion,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(users.id, context.user.id),
-          eq(users.sessionVersion, context.user.sessionVersion),
-        ),
-      )
-      .returning({ id: users.id });
-    if (!changed.length) return [];
-    await tx.insert(activityLogs).values({
-      teamId: context.membership.teamId,
-      userId: context.user.id,
-      action: ActivityType.UPDATE_PASSWORD,
+  // Raising the session version ends every other session of this account.
+  const updated = await runTransaction(async (tx) => {
+    const current = await tx.get(account);
+    if (current.get("session_version") !== context.user.sessionVersion) return false;
+    tx.update(account, {
+      password_hash: passwordHash,
+      session_version: nextSessionVersion,
+      updated_at: FieldValue.serverTimestamp(),
     });
-    return changed;
+    tx.create(activity(context.user.id).doc(), activityEntry(context.membership.teamId, ActivityType.UPDATE_PASSWORD));
+    return true;
   });
   if (!updated)
     return formRedirect("/sign-in", {

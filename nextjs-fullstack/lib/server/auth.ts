@@ -1,16 +1,15 @@
 import "server-only";
 
-import { and, desc, eq, isNull } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 import { redirect } from "next/navigation";
-import { db } from "@/lib/server/db/client";
+import { FieldValue } from "#sandbox/db";
 import {
-  activityLogs,
-  teamMembers,
-  teams,
-  users,
+  activity,
+  team,
+  teamMember,
+  user,
   type ActivityType,
-} from "@/lib/server/db/schema";
+} from "@/lib/server/data";
 import {
   sessionFromCookies,
   sessionFromRequest,
@@ -19,54 +18,45 @@ import type { SessionClaims } from "@/lib/auth/session-core";
 
 export type UserContext = {
   user: {
-    id: number;
+    id: string;
     name: string | null;
     email: string;
     sessionVersion: number;
   };
   membership: {
-    id: number;
-    teamId: number;
+    id: string;
+    teamId: string;
     role: string;
   };
   team: {
-    id: number;
+    id: string;
     name: string;
   };
 };
 
-async function contextForClaims(claims: SessionClaims | null) {
+async function contextForClaims(claims: SessionClaims | null): Promise<UserContext | null> {
   if (!claims) return null;
-  const [row] = await db()
-    .select({
-      user: {
-        id: users.id,
-        name: users.name,
-        email: users.email,
-        sessionVersion: users.sessionVersion,
-      },
-      membership: {
-        id: teamMembers.id,
-        teamId: teamMembers.teamId,
-        role: teamMembers.role,
-      },
-      team: {
-        id: teams.id,
-        name: teams.name,
-      },
-    })
-    .from(users)
-    .innerJoin(teamMembers, eq(teamMembers.userId, users.id))
-    .innerJoin(teams, eq(teams.id, teamMembers.teamId))
-    .where(
-      and(
-        eq(users.id, claims.userId),
-        eq(users.sessionVersion, claims.sessionVersion),
-        isNull(users.deletedAt),
-      ),
-    )
-    .limit(1);
-  return row || null;
+  const account = await user(claims.userId).get();
+  const data = account.data();
+  if (!data || data.session_version !== claims.sessionVersion) return null;
+  const teamId = String(data.team_id || "");
+  if (!teamId) return null;
+  const [membership, teamDoc] = await Promise.all([
+    teamMember(teamId, account.id).get(),
+    team(teamId).get(),
+  ]);
+  if (!membership.exists || !teamDoc.exists) return null;
+  return {
+    user: {
+      id: account.id,
+      name: data.name ?? null,
+      email: data.email,
+      sessionVersion: data.session_version,
+    },
+    // A membership's id is its user's id: a user belongs to one team.
+    membership: { id: account.id, teamId, role: membership.get("role") },
+    team: { id: teamId, name: teamDoc.get("name") },
+  };
 }
 
 export async function currentUserContext() {
@@ -83,52 +73,44 @@ export async function requirePageUser() {
   return context;
 }
 
-export async function logActivity(
-  context: Pick<UserContext, "user" | "membership">,
-  action: ActivityType,
-) {
-  await db().insert(activityLogs).values({
-    teamId: context.membership.teamId,
-    userId: context.user.id,
-    action,
-  });
+export function activityEntry(teamId: string, action: ActivityType) {
+  return { team_id: teamId, action, created_at: FieldValue.serverTimestamp() };
+}
+
+export async function logActivity(userId: string, teamId: string, action: ActivityType) {
+  await activity(userId).add(activityEntry(teamId, action));
 }
 
 export async function activityForUser(context: UserContext) {
-  return db()
-    .select({
-      id: activityLogs.id,
-      action: activityLogs.action,
-      createdAt: activityLogs.createdAt,
-    })
-    .from(activityLogs)
-    .where(
-      and(
-        eq(activityLogs.teamId, context.membership.teamId),
-        eq(activityLogs.userId, context.user.id),
-      ),
-    )
-    .orderBy(desc(activityLogs.createdAt))
-    .limit(20);
+  const { docs } = await activity(context.user.id)
+    .orderBy("created_at", "desc")
+    .limit(20)
+    .get();
+  return docs
+    .filter((doc) => doc.get("team_id") === context.membership.teamId)
+    .map((doc) => ({
+      id: doc.id,
+      action: String(doc.get("action")),
+      createdAt: doc.get("created_at").toDate() as Date,
+    }));
 }
 
 export async function teamForUser(context: UserContext) {
-  const members = await db()
-    .select({
-      membershipId: teamMembers.id,
-      role: teamMembers.role,
-      userId: users.id,
-      name: users.name,
-      email: users.email,
-    })
-    .from(teamMembers)
-    .innerJoin(users, eq(users.id, teamMembers.userId))
-    .where(
-      and(
-        eq(teamMembers.teamId, context.membership.teamId),
-        isNull(users.deletedAt),
-      ),
-    )
-    .orderBy(teamMembers.id);
+  const { docs } = await team(context.membership.teamId)
+    .collection("members")
+    .orderBy("joined_at")
+    .get();
+  const accounts = await Promise.all(docs.map((doc) => user(doc.id).get()));
+  const members = docs.flatMap((doc, index) => {
+    const account = accounts[index].data();
+    if (!account) return [];
+    return [{
+      membershipId: doc.id,
+      role: String(doc.get("role")),
+      userId: doc.id,
+      name: (account.name ?? null) as string | null,
+      email: String(account.email),
+    }];
+  });
   return { ...context.team, members };
 }
