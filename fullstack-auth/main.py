@@ -9,10 +9,9 @@ import secrets
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from google.api_core.exceptions import AlreadyExists
 
 from sandbox_auth import clear_session, current_user, set_session, signer
-from sandbox_db import collection, env
+from sandbox_db import AlreadyExists, collection, env
 
 
 app = FastAPI()
