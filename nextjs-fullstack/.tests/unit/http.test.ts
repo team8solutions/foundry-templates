@@ -83,6 +83,14 @@ test("rejects cross-origin and unsupported content types", async () => {
   );
 });
 
+test("trusts the browser's same-origin signal when a proxy rewrites Host", () => {
+  const proxied = { origin: "https://preview.example.test", host: "10.0.0.7:8081" };
+  assert.equal(isSameOrigin(request({ ...proxied, "sec-fetch-site": "same-origin" })), true);
+  assert.equal(isSameOrigin(request({ ...proxied, "sec-fetch-site": "same-site" })), false);
+  assert.equal(isSameOrigin(request({ ...formHeaders, "sec-fetch-site": "cross-site" })), false);
+  assert.equal(isSameOrigin(request(proxied)), false);
+});
+
 test("rejects a chunked form once its streamed bytes exceed the limit", async () => {
   await assertFormError(
     readFormRequest(chunkedRequest(["name=", "1234", "5678"]), 10),

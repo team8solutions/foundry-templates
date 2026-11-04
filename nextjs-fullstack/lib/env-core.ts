@@ -27,7 +27,9 @@ export function sessionSigningKeyFrom(env: RuntimeEnv) {
 }
 
 export function sessionCookieSecureFrom(env: RuntimeEnv) {
-  return env.SESSION_COOKIE_SECURE !== "false";
+  if (env.SESSION_COOKIE_SECURE) return env.SESSION_COOKIE_SECURE !== "false";
+  // Like the platform's own session helper: an AIT Foundry preview may be served over plain HTTP.
+  return env.SYMPOSIA_ENV !== "dev";
 }
 
 export function validateRuntimeEnvFrom(env: RuntimeEnv) {
