@@ -9,7 +9,7 @@ Each template lives in its own folder. Foundry selects a reviewed commit and pac
 | Folder | Stack | Requirements |
 | --- | --- | --- |
 | [`nextjs-fullstack`](nextjs-fullstack/STARTER.md) | Next.js, TypeScript, email/password accounts | Node 24.21.0, Foundry's `#sandbox/db` and `#sandbox/auth` (a copy ships in `.symposia/sandbox/`) |
-| [`fullstack-auth`](fullstack-auth/STARTER.md) | FastAPI, browser UI, email/password accounts | Foundry's Python runtime, `sandbox_auth` and `sandbox_db` |
+| [`fullstack-auth`](fullstack-auth/STARTER.md) | FastAPI, browser UI, email/password accounts | Foundry's Python runtime, `sandbox_auth`, `sandbox_db`, and app-scoped Firestore |
 
 Both starters keep data and sessions through helpers supplied by Foundry. The Python starter is not a standalone Python distribution; the Next.js starter runs outside Foundry against a local PostgreSQL. Each template's `STARTER.md` describes its runtime contract.
 
