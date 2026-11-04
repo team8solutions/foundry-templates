@@ -49,8 +49,11 @@ jobs:
         run: npm run build
       - name: Verify application against disposable PostgreSQL
         env:
-          DATABASE_URL: postgresql://postgres@127.0.0.1:5432/next_template_test
+          SYMPOSIA_APP: next-template-test
+          SYMPOSIA_DATA_BACKEND: postgres
+          SYMPOSIA_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/next_template_test
         run: |
+          npm install --no-save --no-audit --no-fund pg@8.23.1
           SESSION_SIGNING_KEY="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')"
           export SESSION_SIGNING_KEY
           npm run test:integration

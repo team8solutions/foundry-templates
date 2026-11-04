@@ -1,47 +1,25 @@
-import { SignJWT, jwtVerify } from "jose";
-
+// What the signed session cookie holds: the user's id and the session version it was issued for.
+// A password change raises the version, which ends every older session.
 export type SessionClaims = {
-  userId: number;
+  userId: string;
   sessionVersion: number;
 };
 
-const ISSUER = "ait-foundry-app";
-const AUDIENCE = "ait-foundry-browser";
-const ALGORITHM = "HS256";
+const USER_ID = /^[A-Za-z0-9]{1,64}$/;
 
-export async function createSessionToken(
-  claims: SessionClaims,
-  key: Uint8Array,
-  expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000),
-) {
-  return new SignJWT({ sv: claims.sessionVersion })
-    .setProtectedHeader({ alg: ALGORITHM })
-    .setSubject(String(claims.userId))
-    .setIssuer(ISSUER)
-    .setAudience(AUDIENCE)
-    .setIssuedAt()
-    .setExpirationTime(Math.floor(expiresAt.getTime() / 1000))
-    .sign(key);
+export function sessionValue(claims: SessionClaims) {
+  if (!USER_ID.test(claims.userId)) throw new Error("Invalid user id");
+  if (!Number.isSafeInteger(claims.sessionVersion) || claims.sessionVersion <= 0)
+    throw new Error("Invalid session version");
+  return `${claims.userId}:${claims.sessionVersion}`;
 }
 
-export async function verifySessionToken(
-  token: string,
-  key: Uint8Array,
-): Promise<SessionClaims | null> {
-  try {
-    const { payload } = await jwtVerify(token, key, {
-      algorithms: [ALGORITHM],
-      issuer: ISSUER,
-      audience: AUDIENCE,
-    });
-    const userId = Number(payload.sub);
-    const sessionVersion = payload.sv;
-    if (!Number.isSafeInteger(userId) || userId <= 0)
-      return null;
-    if (!Number.isSafeInteger(sessionVersion) || Number(sessionVersion) <= 0)
-      return null;
-    return { userId, sessionVersion: Number(sessionVersion) };
-  } catch {
-    return null;
-  }
+export function parseSessionValue(value: string | null | undefined): SessionClaims | null {
+  const match = /^([A-Za-z0-9]{1,64}):([1-9][0-9]{0,14})$/.exec(value || "");
+  if (!match) return null;
+  return { userId: match[1], sessionVersion: Number(match[2]) };
+}
+
+export function isUserId(value: string) {
+  return USER_ID.test(value);
 }

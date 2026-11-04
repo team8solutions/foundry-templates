@@ -1,19 +1,24 @@
-import { and, eq, isNull } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { comparePassword, hashPassword } from "@/lib/auth/password";
-import { db } from "@/lib/server/db/client";
-import {
-  ActivityType,
-  activityLogs,
-  teamMembers,
-  users,
-} from "@/lib/server/db/schema";
-import { validateRuntimeEnv } from "@/lib/server/env";
+import { logActivity } from "@/lib/server/auth";
+import { ActivityType, teamMember, user, userEmail } from "@/lib/server/data";
 import { formRedirect, parseFormRequest } from "@/lib/server/responses";
 import { setSessionCookie } from "@/lib/server/session";
 import { signInSchema } from "@/lib/validation";
 
 const invalidCredentials = "Invalid email or password";
+
+async function accountFor(email: string) {
+  const owner = await userEmail(email).get();
+  const userId = owner.get("user_id");
+  if (typeof userId !== "string") return null;
+  const account = await user(userId).get();
+  const data = account.data();
+  if (!data || typeof data.team_id !== "string") return null;
+  const membership = await teamMember(data.team_id, account.id).get();
+  if (!membership.exists) return null;
+  return { id: account.id, teamId: data.team_id, passwordHash: String(data.password_hash), sessionVersion: data.session_version };
+}
 
 export async function POST(request: NextRequest) {
   const form = await parseFormRequest(request);
@@ -22,37 +27,20 @@ export async function POST(request: NextRequest) {
   if (!parsed.success)
     return formRedirect("/sign-in", { error: invalidCredentials });
 
-  try {
-    validateRuntimeEnv();
-  } catch {
-    return formRedirect("/sign-in", {
-      error: "Application sign-in is not configured",
-    });
-  }
-
-  const [account] = await db()
-    .select({ user: users, membership: teamMembers })
-    .from(users)
-    .innerJoin(teamMembers, eq(teamMembers.userId, users.id))
-    .where(and(eq(users.email, parsed.data.email), isNull(users.deletedAt)))
-    .limit(1);
-
+  const account = await accountFor(parsed.data.email);
   if (!account) {
+    // Spend the same time as a real check, so response times do not reveal which emails exist.
     await hashPassword(parsed.data.password);
     return formRedirect("/sign-in", { error: invalidCredentials });
   }
-  if (!(await comparePassword(parsed.data.password, account.user.passwordHash)))
+  if (!(await comparePassword(parsed.data.password, account.passwordHash)))
     return formRedirect("/sign-in", { error: invalidCredentials });
 
-  await db().insert(activityLogs).values({
-    teamId: account.membership.teamId,
-    userId: account.user.id,
-    action: ActivityType.SIGN_IN,
-  });
+  await logActivity(account.id, account.teamId, ActivityType.SIGN_IN);
   const response = formRedirect("/dashboard");
   await setSessionCookie(response, {
-    userId: account.user.id,
-    sessionVersion: account.user.sessionVersion,
+    userId: account.id,
+    sessionVersion: account.sessionVersion,
   });
   return response;
 }

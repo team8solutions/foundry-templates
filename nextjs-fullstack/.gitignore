@@ -38,10 +38,6 @@ yarn-error.log*
 next-env.d.ts
 .vscode
 
-# Docker
-postgres_data/
-.env*.local
-
 # AIT Foundry (applying the starter replaces the project's own .gitignore)
 .claude/
 *.key

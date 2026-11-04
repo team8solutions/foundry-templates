@@ -2,58 +2,38 @@ import "server-only";
 
 import type { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { clearSession, setSession, unsign } from "#sandbox/auth";
 import {
-  createSessionToken,
-  verifySessionToken,
+  parseSessionValue,
+  sessionValue,
   type SessionClaims,
 } from "@/lib/auth/session-core";
-import { sessionCookieSecure, sessionSigningKey } from "@/lib/server/env";
 
-export const SESSION_COOKIE = "session";
-const SESSION_MAX_AGE_SECONDS = 24 * 60 * 60;
+// The cookie #sandbox/auth writes: signed with the platform's SESSION_SIGNING_KEY, HTTP-only,
+// SameSite=Lax, and Secure on the published app (plain HTTP works in a preview).
+export const SESSION_COOKIE = "symposia_session";
+export const SESSION_MAX_AGE_SECONDS = 24 * 60 * 60;
 
-export async function signSession(claims: SessionClaims) {
-  const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000);
-  return {
-    token: await createSessionToken(claims, sessionSigningKey(), expiresAt),
-    expiresAt,
-  };
-}
-
-export async function verifyConfiguredSession(token: string) {
-  return verifySessionToken(token, sessionSigningKey());
+export async function verifySession(token: string | undefined) {
+  if (!token) return null;
+  return parseSessionValue(await unsign(token, undefined, SESSION_MAX_AGE_SECONDS));
 }
 
 export async function sessionFromRequest(request: NextRequest) {
-  const token = request.cookies.get(SESSION_COOKIE)?.value;
-  return token ? verifyConfiguredSession(token) : null;
+  return verifySession(request.cookies.get(SESSION_COOKIE)?.value);
 }
 
 export async function sessionFromCookies() {
-  const token = (await cookies()).get(SESSION_COOKIE)?.value;
-  return token ? verifyConfiguredSession(token) : null;
+  return verifySession((await cookies()).get(SESSION_COOKIE)?.value);
 }
 
-export async function setSessionCookie(
-  response: NextResponse,
-  claims: SessionClaims,
-) {
-  const { token, expiresAt } = await signSession(claims);
-  response.cookies.set(SESSION_COOKIE, token, {
-    httpOnly: true,
-    secure: sessionCookieSecure(),
-    sameSite: "lax",
-    path: "/",
-    expires: expiresAt,
+export async function setSessionCookie(response: NextResponse, claims: SessionClaims) {
+  await setSession(response, sessionValue(claims), {
+    cookieName: SESSION_COOKIE,
+    maxAge: SESSION_MAX_AGE_SECONDS,
   });
 }
 
 export function clearSessionCookie(response: NextResponse) {
-  response.cookies.set(SESSION_COOKIE, "", {
-    httpOnly: true,
-    secure: sessionCookieSecure(),
-    sameSite: "lax",
-    path: "/",
-    maxAge: 0,
-  });
+  clearSession(response, { cookieName: SESSION_COOKIE });
 }

@@ -5,5 +5,6 @@ import nextTypescript from "eslint-config-next/typescript";
 export default defineConfig([
   ...nextVitals,
   ...nextTypescript,
-  globalIgnores([".next/**", "coverage/**", "next-env.d.ts"]),
+  // .symposia/sandbox is the platform's helper code, replaced on every preview and publish.
+  globalIgnores([".next/**", "coverage/**", "next-env.d.ts", ".symposia/**"]),
 ]);

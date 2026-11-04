@@ -1,48 +1,38 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { SignJWT } from "jose";
-import { createSessionToken, verifySessionToken } from "../../lib/auth/session-core";
+import { sign, unsign } from "#sandbox/auth";
+import { parseSessionValue, sessionValue } from "../../lib/auth/session-core";
 
-const key = new TextEncoder().encode("unit-test-signing-key-with-at-least-32-bytes");
+// Read on first use, so setting it after the import is enough.
+process.env.SESSION_SIGNING_KEY = "unit-test-signing-key-with-at-least-32-bytes";
+const DAY = 24 * 60 * 60;
 
-test("creates and verifies a valid session", async () => {
-  const token = await createSessionToken({ userId: 42, sessionVersion: 3 }, key);
-  assert.deepEqual(await verifySessionToken(token, key), {
-    userId: 42,
-    sessionVersion: 3,
-  });
+test("round-trips a session's user and version", () => {
+  assert.equal(sessionValue({ userId: "u42", sessionVersion: 3 }), "u42:3");
+  assert.deepEqual(parseSessionValue("u42:3"), { userId: "u42", sessionVersion: 3 });
 });
 
-test("rejects tampered and expired sessions", async () => {
-  const token = await createSessionToken({ userId: 7, sessionVersion: 1 }, key);
-  const parts = token.split(".");
-  parts[1] = `${parts[1][0] === "a" ? "b" : "a"}${parts[1].slice(1)}`;
-  assert.equal(await verifySessionToken(parts.join("."), key), null);
-
-  const expired = await createSessionToken(
-    { userId: 7, sessionVersion: 1 },
-    key,
-    new Date(Date.now() - 1_000),
-  );
-  assert.equal(await verifySessionToken(expired, key), null);
+test("rejects malformed session values", () => {
+  for (const value of [null, "", "u42", "u42:0", "u42:-1", "u42:1.5", "u/42:1", "../x:1", "u42:1:2", `${"a".repeat(65)}:1`])
+    assert.equal(parseSessionValue(value), null, String(value));
+  assert.throws(() => sessionValue({ userId: "a/b", sessionVersion: 1 }), /user id/);
+  assert.throws(() => sessionValue({ userId: "u1", sessionVersion: 0 }), /session version/);
 });
 
-test("rejects modified signature bytes", async () => {
-  const token = await createSessionToken({ userId: 7, sessionVersion: 1 }, key);
+test("a signed session survives only unchanged and within its age", async () => {
+  const token = await sign(sessionValue({ userId: "u7", sessionVersion: 1 }));
+  assert.deepEqual(parseSessionValue(await unsign(token, undefined, DAY)), { userId: "u7", sessionVersion: 1 });
+
   const parts = token.split(".");
   const signature = Buffer.from(parts[2], "base64url");
   signature[0] ^= 1;
-  parts[2] = signature.toString("base64url");
-  assert.equal(await verifySessionToken(parts.join("."), key), null);
-});
+  assert.equal(await unsign([parts[0], parts[1], signature.toString("base64url")].join("."), undefined, DAY), null);
+  const forged = Buffer.from("u8:1").toString("base64url");
+  assert.equal(await unsign([forged, parts[1], parts[2]].join("."), undefined, DAY), null);
 
-test("rejects a token with a different algorithm", async () => {
-  const token = await new SignJWT({ sv: 1 })
-    .setProtectedHeader({ alg: "HS384" })
-    .setSubject("7")
-    .setIssuer("ait-foundry-app")
-    .setAudience("ait-foundry-browser")
-    .setExpirationTime("1h")
-    .sign(key);
-  assert.equal(await verifySessionToken(token, key), null);
+  const now = Date.now;
+  Date.now = () => now() - (DAY + 60) * 1000;
+  const expired = await sign(sessionValue({ userId: "u7", sessionVersion: 1 }));
+  Date.now = now;
+  assert.equal(await unsign(expired, undefined, DAY), null);
 });
