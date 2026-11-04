@@ -9,7 +9,7 @@ Each template lives in its own folder. Foundry selects a reviewed commit and pac
 | Folder | Stack | Requirements |
 | --- | --- | --- |
 | [`nextjs-fullstack`](nextjs-fullstack/STARTER.md) | Next.js, TypeScript, email/password accounts | Node 24.21.0, Foundry's `#sandbox/db` and `#sandbox/auth` (a copy ships in `.symposia/sandbox/`) |
-| [`fullstack-auth`](fullstack-auth/STARTER.md) | FastAPI, browser UI, email/password accounts | Foundry's Python runtime, `sandbox_auth`, `sandbox_db`, and app-scoped Firestore |
+| [`fullstack-auth`](fullstack-auth/STARTER.md) | FastAPI, browser UI, email/password accounts | Foundry's Python runtime, `sandbox_auth` and `sandbox_db` |
 
 Both starters keep data and sessions through helpers supplied by Foundry. The Python starter is not a standalone Python distribution; the Next.js starter runs outside Foundry against a local PostgreSQL. Each template's `STARTER.md` describes its runtime contract.
 
@@ -33,7 +33,7 @@ The build needs no database or signing key. For local setup and integration test
 1. Put a template in its own folder. Include `STARTER.md`, dependency files, applicable license notices, and runnable checks.
 2. Add its checks to `.github/workflows/quality.yml`.
 3. Open a pull request here.
-4. Copy the folder into Foundry's `services/workspace/templates/` at the reviewed commit, and note that commit there. A new template also needs explicit approval in Foundry's existing installer, API, and selection UI. Adding a folder does not enable it automatically.
+4. Update Foundry's template submodule (`services/workspace/templates`) to the reviewed commit. A new template also needs explicit approval in Foundry's existing installer, API, and selection UI. Adding a folder does not enable it automatically.
 5. Run Foundry's template compatibility tests and rebuild both the workspace and control-plane images.
 
 Existing generated applications keep their copied files. Updating this repository does not update those applications.
