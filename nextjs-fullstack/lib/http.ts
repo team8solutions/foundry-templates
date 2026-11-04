@@ -10,6 +10,10 @@ export class FormRequestError extends Error {
 }
 
 export function isSameOrigin(request: Request) {
+  // Browsers set Sec-Fetch-Site themselves; it stays correct behind a proxy that rewrites Host,
+  // such as the AIT Foundry preview. Clients without it fall back to comparing Origin with Host.
+  const site = request.headers.get("sec-fetch-site");
+  if (site) return site === "same-origin";
   const origin = request.headers.get("origin");
   const host = request.headers.get("host");
   if (!origin || !host) return false;

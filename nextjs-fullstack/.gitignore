@@ -41,3 +41,7 @@ next-env.d.ts
 # Docker
 postgres_data/
 .env*.local
+
+# AIT Foundry (applying the starter replaces the project's own .gitignore)
+.claude/
+*.key

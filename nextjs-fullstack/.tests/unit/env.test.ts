@@ -36,3 +36,9 @@ test("uses secure cookies unless local HTTP opts out", () => {
   assert.equal(sessionCookieSecureFrom({ SESSION_COOKIE_SECURE: "true" }), true);
   assert.equal(sessionCookieSecureFrom({ SESSION_COOKIE_SECURE: "false" }), false);
 });
+
+test("lets only an AIT Foundry preview use plain-HTTP cookies by default", () => {
+  assert.equal(sessionCookieSecureFrom({ SYMPOSIA_ENV: "dev" }), false);
+  assert.equal(sessionCookieSecureFrom({ SYMPOSIA_ENV: "prod" }), true);
+  assert.equal(sessionCookieSecureFrom({ SYMPOSIA_ENV: "dev", SESSION_COOKIE_SECURE: "true" }), true);
+});

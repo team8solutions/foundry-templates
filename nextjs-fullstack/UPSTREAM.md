@@ -17,4 +17,5 @@ AIT Foundry adaptations:
 - Added a session version so password changes invalidate older sessions.
 - Added committed PostgreSQL migrations and a bounded advisory-lock migration runner.
 - Added local PostgreSQL setup, platform environment declarations, and verification tests.
+- Accepted the browser's `Sec-Fetch-Site` on form posts and plain-HTTP cookies in previews, so sign-in works behind the AIT Foundry preview.
 - Kept application accounts separate from credentials used by external integrations.
