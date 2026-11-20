@@ -4,6 +4,7 @@ import type { Metadata, Viewport } from "next";
 export const metadata: Metadata = {
   title: "AIT Foundry Next.js Starter",
   description: "A secure full-stack Next.js starter.",
+  icons: "/app-icon.svg",
 };
 
 export const viewport: Viewport = {
