@@ -12,7 +12,7 @@ export function Login({
   return (
     <main className="flex min-h-dvh items-center justify-center bg-gray-50 px-4 py-12">
       <div className="w-full max-w-md">
-        <CircleIcon className="mx-auto size-12 text-orange-600" aria-hidden="true" />
+        <CircleIcon className="mx-auto size-12 text-brand-600" aria-hidden="true" />
         <h1 className="mt-6 text-center text-3xl font-bold text-gray-950">
           {signingIn ? "Sign in to your account" : "Create your account"}
         </h1>
@@ -47,7 +47,7 @@ export function Login({
           {error ? <p className="text-sm text-red-700" role="alert">{error}</p> : null}
           <button
             type="submit"
-            className="w-full rounded-full bg-orange-600 px-4 py-2.5 font-semibold text-white hover:bg-orange-700"
+            className="w-full rounded-full bg-brand-600 px-4 py-2.5 font-semibold text-white hover:bg-brand-700"
           >
             {signingIn ? "Sign in" : "Sign up"}
           </button>
@@ -56,7 +56,7 @@ export function Login({
           {signingIn ? "Need an account?" : "Already have an account?"}{" "}
           <Link
             href={signingIn ? "/sign-up" : "/sign-in"}
-            className="font-semibold text-orange-700 hover:text-orange-800"
+            className="font-semibold text-brand-700 hover:text-brand-800"
           >
             {signingIn ? "Sign up" : "Sign in"}
           </Link>

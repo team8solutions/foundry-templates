@@ -15,7 +15,7 @@ export default async function TeamPage({
   return (
     <section className="p-4 sm:p-6 lg:p-8">
       <div className="mb-6">
-        <p className="text-sm font-medium text-orange-700">Team</p>
+        <p className="text-sm font-medium text-brand-700">Team</p>
         <h1 className="mt-1 text-2xl font-semibold text-gray-950">{team.name}</h1>
       </div>
       <div className="rounded-2xl border border-gray-200 bg-white shadow-sm">

@@ -1,5 +1,21 @@
 @import "tailwindcss";
 
+/* The app's brand colour, used as brand-50 … brand-950 everywhere. Change the palette here (for
+   example orange → emerald) to re-theme every page at once. */
+@theme inline {
+  --color-brand-50: var(--color-orange-50);
+  --color-brand-100: var(--color-orange-100);
+  --color-brand-200: var(--color-orange-200);
+  --color-brand-300: var(--color-orange-300);
+  --color-brand-400: var(--color-orange-400);
+  --color-brand-500: var(--color-orange-500);
+  --color-brand-600: var(--color-orange-600);
+  --color-brand-700: var(--color-orange-700);
+  --color-brand-800: var(--color-orange-800);
+  --color-brand-900: var(--color-orange-900);
+  --color-brand-950: var(--color-orange-950);
+}
+
 @layer base {
   * {
     border-color: var(--color-gray-200);
@@ -13,6 +29,6 @@
 
   button,
   input {
-    outline-color: var(--color-orange-600);
+    outline-color: var(--color-brand-600);
   }
 }

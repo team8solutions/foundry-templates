@@ -27,7 +27,7 @@ export default async function ActivityPage() {
               const Icon = detail?.icon || Activity;
               return (
                 <li key={log.id} className="flex items-center gap-4 px-5 py-4">
-                  <span className="rounded-full bg-orange-100 p-2 text-orange-700"><Icon className="size-5" aria-hidden="true" /></span>
+                  <span className="rounded-full bg-brand-100 p-2 text-brand-700"><Icon className="size-5" aria-hidden="true" /></span>
                   <div>
                     <p className="font-medium text-gray-950">{detail?.label || "Account activity"}</p>
                     <time className="text-sm text-gray-600" dateTime={log.createdAt.toISOString()}>{log.createdAt.toLocaleString()}</time>

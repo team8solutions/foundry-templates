@@ -25,7 +25,7 @@ export default async function GeneralPage({
         </label>
         {error ? <p className="text-sm text-red-700" role="alert">{error}</p> : null}
         {success ? <p className="text-sm text-green-700">{success}</p> : null}
-        <button type="submit" className="rounded-full bg-orange-600 px-5 py-2.5 font-semibold text-white hover:bg-orange-700">Save changes</button>
+        <button type="submit" className="rounded-full bg-brand-600 px-5 py-2.5 font-semibold text-white hover:bg-brand-700">Save changes</button>
       </form>
     </section>
   );

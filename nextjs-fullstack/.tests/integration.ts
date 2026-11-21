@@ -226,6 +226,10 @@ async function verifyAccountFlow(
   appControl: { restart: () => Promise<void> },
 ) {
   await assertProtected(new Browser(browser.baseUrl));
+  // There is no starter home page: / goes to the app, and the app sends signed-out visitors to sign-in.
+  const home = await new Browser(browser.baseUrl).request("/");
+  assert.ok([303, 307, 308].includes(home.status));
+  assert.equal(new URL(home.headers.get("location") || "", browser.baseUrl).pathname, "/dashboard");
   await verifyInputBoundary(browser);
   const cookie = await signUp(browser, email);
   if (browser.baseUrl.startsWith("http://")) assert.equal(cookie.secure, false);
